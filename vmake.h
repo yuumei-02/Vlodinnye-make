@@ -94,6 +94,8 @@ void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
       goto failure;
    }
 
+   execute_command(true, "rm ./vmake-old");
+
    // @todo: pass current arguments
    exit(execute_command(false, "./vmake --no-rebuild"));
    return;
