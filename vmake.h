@@ -5,6 +5,33 @@
 #include <mcu/core.h>
 #include <mcu/io.h>
 
+typedef enum : u8 {
+   GCC,
+   Clang,
+} Compiler;
+
+typedef enum : u8 {
+   Og,
+   Os, Oz,
+   O0, O1,
+   O2, O3,
+} Optimization;
+
+typedef enum : u8 {
+   C23, C11, C99
+} LanguageStandard;
+
+typedef struct {
+   Compiler compiler;
+   Optimization optimization;
+   LanguageStandard standard;
+   struct {
+      bool wall;
+      bool wextra;
+      bool pedantic;
+   } warnings;
+} BuildOptions;
+
 /// Module ID
 typedef usize ModuleId;
 
@@ -14,7 +41,8 @@ typedef enum {
 
 typedef struct {
    ModuleType type;
-   String name;
+   String output_name;
+   String path;
    Vector ModuleId_dep;
 } Module;
 
@@ -24,15 +52,21 @@ typedef struct {
 
 extern Vmake vmake;
 
-ModuleId Module_new(const cstr name, ModuleType type);
+const cstr Compiler_to_cstr(Compiler self);
+const cstr Optimization_to_cstr(Optimization self);
+const cstr LanguageStandard_to_cstr(LanguageStandard self);
+
+ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type);
 void Module_add_dependency(ModuleId self, ModuleId dependency);
 
 Vmake Vmake_new();
 void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
+bool Vmake_build(ModuleId module, BuildOptions build_options);
 
 /// returns [-1] on [failure].
 /// returns [command]'s exit code on success.
 i32 execute_command(bool suppress, nullable const cstr command);
+i32 echo_execute_command(bool suppress, nullable const cstr command);
 
 #endif
 
@@ -43,12 +77,47 @@ i32 execute_command(bool suppress, nullable const cstr command);
 #include <string.h>
 #include <errno.h>
 
-ModuleId Module_new(const cstr name, ModuleType type) {
-   mcu_assert(name != nullptr, "name can't be null");
+const cstr Compiler_to_cstr(Compiler self) {
+   switch (self) {
+      case GCC:   return "gcc";
+      case Clang: return "clang";
+   }
+
+   return "Unknown";
+}
+
+const cstr Optimization_to_cstr(Optimization self) {
+   switch (self) {
+      case Og: return "Og";
+      case Os: return "Os";
+      case Oz: return "Oz";
+      case O0: return "O0";
+      case O1: return "O1";
+      case O2: return "O2";
+      case O3: return "O3";
+   }
+
+   return "Unknown";
+}
+
+const cstr LanguageStandard_to_cstr(LanguageStandard self) {
+   switch (self) {
+      case C23: return "c23";
+      case C11: return "c11";
+      case C99: return "c99";
+   }
+
+   return "Unkown";
+}
+
+ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type) {
+   mcu_assert(output_name != nullptr, "output_name can't be null");
+   mcu_assert(path != nullptr, "path can't be null");
    
    Module self = {
       .type = type,
-      .name = String_from((cstr) name),
+      .output_name = String_from((cstr) output_name),
+      .path = String_from((cstr) path),
       .ModuleId_dep = Vector_new(sizeof(ModuleId))
    };
 
@@ -97,12 +166,51 @@ void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
    execute_command(true, "rm ./vmake-old");
 
    // @todo: pass current arguments
-   exit(execute_command(false, "./vmake --no-rebuild"));
-   return;
+   i32 exit_code = execute_command(false, "./vmake --no-rebuild");
+   if (exit_code != 0) exit(1);
+   exit(0);
 
 failure:
-   eprintln("[!] Rebuild failed");
+   println("[!] Rebuild failed");
    exit(1);
+}
+
+bool Vmake_build(ModuleId module, BuildOptions build_options) {
+   Module* mod = Vector_get(&vmake.Modules, module);
+   if (mod == nullptr) {
+      println("[!] Module not found");
+      return true;
+   }
+
+   if (echo_execute_command(true, "mkdir -p build/bin")) goto failure;
+   if (echo_execute_command(true, "mkdir -p build/lib")) goto failure;
+   if (echo_execute_command(true, "mkdir -p build/obj")) goto failure;
+   println("[!] Building module \"%s\"", mod->path.chars);
+
+   String build_cmd = String_from((cstr) Compiler_to_cstr(build_options.compiler));
+   if (build_options.warnings.wall)     String_append_cstr(&build_cmd, " -Wall");
+   if (build_options.warnings.wextra)   String_append_cstr(&build_cmd, " -Wextra");
+   if (build_options.warnings.pedantic) String_append_cstr(&build_cmd, " -pedantic");
+   String_appendf(&build_cmd, " -std=%s -%s",
+      LanguageStandard_to_cstr(build_options.standard),
+      Optimization_to_cstr(build_options.optimization));
+   String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
+   
+   i32 result = echo_execute_command(false, build_cmd.chars);
+   String_free(&build_cmd);
+   if (result != 0) goto failure;
+   
+   println("[i] Build successfull");
+   return false;
+
+failure:
+   println("[!] Build failed");
+   return true;
+}
+
+i32 echo_execute_command(bool suppress, nullable const cstr command) {
+   println("[i] %s", command);
+   return execute_command(suppress, command);
 }
 
 // @todo: make variadic
@@ -110,10 +218,13 @@ i32 execute_command(bool suppress, nullable const cstr command) {
    if (command == nullptr) return 0;
 
    char output_buffer[1024*4];
+   String tmp_cmd = String_from((cstr) command);
+   String_append_cstr(&tmp_cmd, " 2>&1");
 
-   FILE* childp = popen(command, "r");
+   FILE* childp = popen(tmp_cmd.chars, "r");
+   String_free(&tmp_cmd);
    if (childp == nullptr) {
-      eprintln("Failed to execute command, reason: \"%s\"", strerror(errno));
+      println("Failed to execute command, reason: \"%s\"", strerror(errno));
       return -1;
    }
 
@@ -122,14 +233,14 @@ i32 execute_command(bool suppress, nullable const cstr command) {
    }
 
    if (ferror(childp)) {
-      eprintln("Failed to read from pipe, reason: \"%s\"", strerror(errno));
+      println("Failed to read from pipe, reason: \"%s\"", strerror(errno));
       pclose(childp);
       return -1;
    }
 
    i32 result = pclose(childp);
    if (result == -1) {
-      eprintln("Failed to close pipe, reason: \"%s\"", strerror(errno));
+      println("Failed to close pipe, reason: \"%s\"", strerror(errno));
    }
    
    return result;
