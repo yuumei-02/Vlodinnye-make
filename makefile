@@ -1,10 +1,6 @@
 .ONESHELL:
-.PHONY: example
+.PHONY: install
 
-compiler := gcc
-cflags := -Wall -Wextra -pedantic -std=c23 -Og -ggdb
-clibs := -lmcu-debug
-
-example:
-	$(compiler) $(cflags) *.c -o vmake $(clibs)
+install:
+	sudo cp vmake.h /usr/local/include/vmake.h
 

@@ -30,6 +30,8 @@ typedef struct {
       bool wextra;
       bool pedantic;
    } warnings;
+   bool link_mcu;
+   bool debug_mode;
 } BuildOptions;
 
 /// Module ID
@@ -57,12 +59,14 @@ const cstr Compiler_to_cstr(Compiler self);
 const cstr Optimization_to_cstr(Optimization self);
 const cstr LanguageStandard_to_cstr(LanguageStandard self);
 
+BuildOptions BuildOptions_default_debug();
+BuildOptions BUildOptions_default_release();
+
 ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type);
 void Module_add_dependency(ModuleId self, ModuleId dependency);
 void Module_add_external_dependency(ModuleId self, const cstr dependency_name);
 
-Vmake Vmake_new();
-void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
+Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
 bool Vmake_build(ModuleId module, BuildOptions build_options);
 
 /// returns [-1] on [failure].
@@ -85,7 +89,7 @@ const cstr Compiler_to_cstr(Compiler self) {
       case Clang: return "clang";
    }
 
-   return "Unknown";
+   panic("Invalid Compiler enum variant");
 }
 
 const cstr Optimization_to_cstr(Optimization self) {
@@ -99,7 +103,7 @@ const cstr Optimization_to_cstr(Optimization self) {
       case O3: return "O3";
    }
 
-   return "Unknown";
+   panic("Invalid Optimization enum variant");
 }
 
 const cstr LanguageStandard_to_cstr(LanguageStandard self) {
@@ -109,7 +113,37 @@ const cstr LanguageStandard_to_cstr(LanguageStandard self) {
       case C99: return "c99";
    }
 
-   return "Unkown";
+   panic("Invalid LanguageStandard enum variant");
+}
+
+BuildOptions BuildOptions_default_debug() {
+   return (BuildOptions) {
+      .compiler     = GCC,
+      .optimization = Og,
+      .standard     = C23,
+      .warnings = {
+         .wall     = true,
+         .wextra   = true,
+         .pedantic = true
+      },
+      .link_mcu = true,
+      .debug_mode = true
+   };
+}
+
+BuildOptions BUildOptions_default_release() {
+   return (BuildOptions) {
+      .compiler     = GCC,
+      .optimization = O2,
+      .standard     = C23,
+      .warnings = {
+         .wall     = false,
+         .wextra   = false,
+         .pedantic = false
+      },
+      .link_mcu = true,
+      .debug_mode = false
+   };
 }
 
 ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type) {
@@ -148,21 +182,17 @@ void Module_add_external_dependency(ModuleId self, const cstr dependency_name) {
    Vector_push(&mod->String_external_dep, &dep);
 }
 
-Vmake Vmake_new() {
-   Vmake self = {
-      .Modules = Vector_new(sizeof(Module))
-   };
-   
-   return self;
-}
-
 #ifndef REBUILD_CMD
 #define REBUILD_CMD "gcc -Wall -Wextra -pedantic -std=c23 vmake.c -o vmake -lmcu-debug"
 #endif
 
-void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
+Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
+   Vmake self = {
+      .Modules = Vector_new(sizeof(Module))
+   };
+   
    for (i32 i = 1; i < argc; ++i) {
-      if (strcmp(argv[i], "--no-rebuild") == 0) return;
+      if (strcmp(argv[i], "--no-rebuild") == 0) return self;
    }
 
    i32 result;
@@ -170,7 +200,7 @@ void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
    result = execute_command(true, "mv ./vmake ./vmake-old");
    if (result != 0) goto failure;
    
-   result = execute_command(true, REBUILD_CMD);
+   result = execute_command(false, REBUILD_CMD);
    if (result != 0) {
       execute_command(true, "mv ./vmake-old ./vmake");
       goto failure;
@@ -179,35 +209,50 @@ void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
    execute_command(true, "rm ./vmake-old");
 
    // @todo: pass current arguments
-   i32 exit_code = execute_command(false, "./vmake --no-rebuild");
+   String new_cmd = String_from("./vmake ");
+   for (i32 i = 1; i < argc; ++i) {
+      String_append_cstr(&new_cmd, argv[i]);
+      String_append(&new_cmd, ' ');
+   }
+   String_append_cstr(&new_cmd, "--no-rebuild");
+   
+   i32 exit_code = echo_execute_command(false, new_cmd.chars);
+   String_free(&new_cmd);
    if (exit_code != 0) exit(1);
    exit(0);
 
 failure:
-   println("[!] Rebuild failed");
+   eprintln("[!] Rebuild failed");
    exit(1);
 }
 
 bool Vmake_build(ModuleId module, BuildOptions build_options) {
    Module* mod = Vector_get(&vmake.Modules, module);
    if (mod == nullptr) {
-      println("[!] Module not found");
+      eprintln("[!] Module not found");
       return true;
    }
 
    if (echo_execute_command(true, "mkdir -p build/bin")) goto failure;
    if (echo_execute_command(true, "mkdir -p build/lib")) goto failure;
    if (echo_execute_command(true, "mkdir -p build/obj")) goto failure;
-   println("[!] Building module \"%s\"", mod->path.chars);
+   println("[i] Building module \"%s\"", mod->path.chars);
 
    String build_cmd = String_from((cstr) Compiler_to_cstr(build_options.compiler));
    if (build_options.warnings.wall)     String_append_cstr(&build_cmd, " -Wall");
    if (build_options.warnings.wextra)   String_append_cstr(&build_cmd, " -Wextra");
    if (build_options.warnings.pedantic) String_append_cstr(&build_cmd, " -pedantic");
+   if (!build_options.debug_mode)       String_append_cstr(&build_cmd, " -DNDEBUG");
    String_appendf(&build_cmd, " -std=%s -%s",
       LanguageStandard_to_cstr(build_options.standard),
       Optimization_to_cstr(build_options.optimization));
    String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
+
+   if (build_options.link_mcu) {
+      String_append_cstr(&build_cmd, build_options.debug_mode
+         ? " -lmcu-debug"
+         : " -lmcu-release");
+   }
 
    foreach (mod->String_external_dep, i) {
       String* extrn_dep = Vector_get(&mod->String_external_dep, i);
@@ -222,7 +267,7 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
    return false;
 
 failure:
-   println("[!] Build failed");
+   eprintln("[!] Build failed");
    return true;
 }
 
@@ -242,7 +287,7 @@ i32 execute_command(bool suppress, nullable const cstr command) {
    FILE* childp = popen(tmp_cmd.chars, "r");
    String_free(&tmp_cmd);
    if (childp == nullptr) {
-      println("Failed to execute command, reason: \"%s\"", strerror(errno));
+      eprintln("Failed to execute command, reason: \"%s\"", strerror(errno));
       return -1;
    }
 
@@ -251,14 +296,14 @@ i32 execute_command(bool suppress, nullable const cstr command) {
    }
 
    if (ferror(childp)) {
-      println("Failed to read from pipe, reason: \"%s\"", strerror(errno));
+      eprintln("Failed to read from pipe, reason: \"%s\"", strerror(errno));
       pclose(childp);
       return -1;
    }
 
    i32 result = pclose(childp);
    if (result == -1) {
-      println("Failed to close pipe, reason: \"%s\"", strerror(errno));
+      eprintln("Failed to close pipe, reason: \"%s\"", strerror(errno));
    }
    
    return result;
