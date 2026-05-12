@@ -44,6 +44,7 @@ typedef struct {
    String output_name;
    String path;
    Vector ModuleId_dep;
+   Vector String_external_dep;
 } Module;
 
 typedef struct {
@@ -58,6 +59,7 @@ const cstr LanguageStandard_to_cstr(LanguageStandard self);
 
 ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type);
 void Module_add_dependency(ModuleId self, ModuleId dependency);
+void Module_add_external_dependency(ModuleId self, const cstr dependency_name);
 
 Vmake Vmake_new();
 void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
@@ -118,7 +120,8 @@ ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type) {
       .type = type,
       .output_name = String_from((cstr) output_name),
       .path = String_from((cstr) path),
-      .ModuleId_dep = Vector_new(sizeof(ModuleId))
+      .ModuleId_dep = Vector_new(sizeof(ModuleId)),
+      .String_external_dep = Vector_new(sizeof(String))
    };
 
    Vector_push(&vmake.Modules, &self);
@@ -133,6 +136,16 @@ void Module_add_dependency(ModuleId self, ModuleId dependency) {
    mcu_assert(l_dep != nullptr, "Nonexistant module (dependency)");
 
    Vector_push(&l_self->ModuleId_dep, &dependency);
+}
+
+void Module_add_external_dependency(ModuleId self, const cstr dependency_name) {
+   Module* mod = Vector_get(&vmake.Modules, self);
+   
+   mcu_assert(mod != nullptr, "Nonexistant module");
+   mcu_assert(dependency_name != nullptr, "dependency_name can't be null");
+
+   String dep = String_from(dependency_name);
+   Vector_push(&mod->String_external_dep, &dep);
 }
 
 Vmake Vmake_new() {
@@ -195,6 +208,11 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       LanguageStandard_to_cstr(build_options.standard),
       Optimization_to_cstr(build_options.optimization));
    String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
+
+   foreach (mod->String_external_dep, i) {
+      String* extrn_dep = Vector_get(&mod->String_external_dep, i);
+      String_appendf(&build_cmd, " -l%s", extrn_dep->chars);
+   }
    
    i32 result = echo_execute_command(false, build_cmd.chars);
    String_free(&build_cmd);
