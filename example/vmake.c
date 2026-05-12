@@ -35,11 +35,11 @@ i32 main(i32 argc, cstr argv[]) {
             result = build();
          }
          cstreq("run") {
-            result = execute_command(false, "build/bin/module-1");
+            result = execute_command("build/bin/module-1");
          }
          else {
             eprintln("Unknown command \"%s\"", argv[i]);
-            return 1;
+            return 0;
          }
       }
    }

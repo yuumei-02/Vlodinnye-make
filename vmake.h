@@ -71,8 +71,10 @@ bool Vmake_build(ModuleId module, BuildOptions build_options);
 
 /// returns [-1] on [failure].
 /// returns [command]'s exit code on success.
-i32 execute_command(bool suppress, nullable const cstr command);
-i32 echo_execute_command(bool suppress, nullable const cstr command);
+i32 execute_command_impl(bool echo, bool suppress, const cstr format, ...);
+
+#define execute_command(format, ...) \
+   execute_command_impl(true, false, format __VA_OPT__(,) __VA_ARGS__)
 
 #endif
 
@@ -197,16 +199,16 @@ Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
 
    i32 result;
    // @todo: replace vmake with argv[0]
-   result = execute_command(true, "mv ./vmake ./vmake-old");
+   result = execute_command_impl(false, true, "mv ./vmake ./vmake-old");
    if (result != 0) goto failure;
    
-   result = execute_command(false, REBUILD_CMD);
+   result = execute_command_impl(false, false, REBUILD_CMD);
    if (result != 0) {
-      execute_command(true, "mv ./vmake-old ./vmake");
+      execute_command_impl(false, true, "mv ./vmake-old ./vmake");
       goto failure;
    }
 
-   execute_command(true, "rm ./vmake-old");
+   execute_command_impl(false, true, "rm ./vmake-old");
 
    // @todo: pass current arguments
    String new_cmd = String_from("./vmake ");
@@ -216,7 +218,7 @@ Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
    }
    String_append_cstr(&new_cmd, "--no-rebuild");
    
-   i32 exit_code = echo_execute_command(false, new_cmd.chars);
+   i32 exit_code = execute_command_impl(true, false, new_cmd.chars);
    String_free(&new_cmd);
    if (exit_code != 0) exit(1);
    exit(0);
@@ -233,9 +235,9 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       return true;
    }
 
-   if (echo_execute_command(true, "mkdir -p build/bin")) goto failure;
-   if (echo_execute_command(true, "mkdir -p build/lib")) goto failure;
-   if (echo_execute_command(true, "mkdir -p build/obj")) goto failure;
+   if (execute_command_impl(true, true, "mkdir -p build/bin")) goto failure;
+   if (execute_command_impl(true, true, "mkdir -p build/lib")) goto failure;
+   if (execute_command_impl(true, true, "mkdir -p build/obj")) goto failure;
    println("[i] Building module \"%s\"", mod->path.chars);
 
    String build_cmd = String_from((cstr) Compiler_to_cstr(build_options.compiler));
@@ -259,7 +261,7 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       String_appendf(&build_cmd, " -l%s", extrn_dep->chars);
    }
    
-   i32 result = echo_execute_command(false, build_cmd.chars);
+   i32 result = execute_command_impl(true, false, build_cmd.chars);
    String_free(&build_cmd);
    if (result != 0) goto failure;
    
@@ -271,23 +273,23 @@ failure:
    return true;
 }
 
-i32 echo_execute_command(bool suppress, nullable const cstr command) {
-   println("[i] %s", command);
-   return execute_command(suppress, command);
-}
-
 // @todo: make variadic
-i32 execute_command(bool suppress, nullable const cstr command) {
-   if (command == nullptr) return 0;
-
+i32 execute_command_impl(bool echo, bool suppress, const cstr format, ...) {
+   va_list args;
+   va_start(args, format);
+   String command = String_new();
+   String_appendfv(&command, format, args);
+   va_end(args);
+   
    char output_buffer[1024*4];
-   String tmp_cmd = String_from((cstr) command);
-   String_append_cstr(&tmp_cmd, " 2>&1");
+   String_append_cstr(&command, " 2>&1");
 
-   FILE* childp = popen(tmp_cmd.chars, "r");
-   String_free(&tmp_cmd);
+   if (echo) println("[i] %s", command.chars);
+
+   FILE* childp = popen(command.chars, "r");
+   String_free(&command);
    if (childp == nullptr) {
-      eprintln("Failed to execute command, reason: \"%s\"", strerror(errno));
+      eprintln("[!] Failed to execute command, reason: \"%s\"", strerror(errno));
       return -1;
    }
 
@@ -296,16 +298,17 @@ i32 execute_command(bool suppress, nullable const cstr command) {
    }
 
    if (ferror(childp)) {
-      eprintln("Failed to read from pipe, reason: \"%s\"", strerror(errno));
+      eprintln("[!] Failed to read from pipe, reason: \"%s\"", strerror(errno));
       pclose(childp);
       return -1;
    }
 
    i32 result = pclose(childp);
    if (result == -1) {
-      eprintln("Failed to close pipe, reason: \"%s\"", strerror(errno));
+      eprintln("[!] Failed to close pipe, reason: \"%s\"", strerror(errno));
+      eprintln("[!] Proceeding...");
    }
-   
+
    return result;
 }
 
