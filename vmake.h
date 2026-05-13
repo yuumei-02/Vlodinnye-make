@@ -60,7 +60,7 @@ const cstr Optimization_to_cstr(Optimization self);
 const cstr LanguageStandard_to_cstr(LanguageStandard self);
 
 BuildOptions BuildOptions_default_debug();
-BuildOptions BUildOptions_default_release();
+BuildOptions BuildOptions_default_release();
 
 ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type);
 void Module_add_dependency(ModuleId self, ModuleId dependency);
@@ -133,7 +133,7 @@ BuildOptions BuildOptions_default_debug() {
    };
 }
 
-BuildOptions BUildOptions_default_release() {
+BuildOptions BuildOptions_default_release() {
    return (BuildOptions) {
       .compiler     = GCC,
       .optimization = O2,
@@ -197,6 +197,10 @@ Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
       if (strcmp(argv[i], "--no-rebuild") == 0) return self;
    }
 
+   if (execute_command_impl(true, true, "mkdir -p build/bin")) goto failure;
+   if (execute_command_impl(true, true, "mkdir -p build/lib")) goto failure;
+   if (execute_command_impl(true, true, "mkdir -p build/obj")) goto failure;
+
    i32 result;
    // @todo: replace vmake with argv[0]
    result = execute_command_impl(false, true, "mv ./vmake ./vmake-old");
@@ -235,9 +239,6 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       return true;
    }
 
-   if (execute_command_impl(true, true, "mkdir -p build/bin")) goto failure;
-   if (execute_command_impl(true, true, "mkdir -p build/lib")) goto failure;
-   if (execute_command_impl(true, true, "mkdir -p build/obj")) goto failure;
    println("[i] Building module \"%s\"", mod->path.chars);
 
    String build_cmd = String_from((cstr) Compiler_to_cstr(build_options.compiler));
@@ -248,6 +249,7 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
    String_appendf(&build_cmd, " -std=%s -%s",
       LanguageStandard_to_cstr(build_options.standard),
       Optimization_to_cstr(build_options.optimization));
+   String_append_cstr(&build_cmd, " -I./build/lib -L./build/lib");
    String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
 
    if (build_options.link_mcu) {
