@@ -38,7 +38,8 @@ typedef struct {
 typedef usize ModuleId;
 
 typedef enum {
-   MT_Executable
+   MT_Executable,
+   MT_StaticLibrary
 } ModuleType;
 
 typedef struct {
@@ -239,6 +240,11 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       return true;
    }
 
+   foreach (mod->ModuleId_dep, i) {
+      ModuleId* mod_id = Vector_get(&mod->ModuleId_dep, i);
+      if (Vmake_build(*mod_id, build_options)) goto failure;
+   }
+
    println("[i] Building module \"%s\"", mod->path.chars);
 
    String build_cmd = String_from((cstr) Compiler_to_cstr(build_options.compiler));
@@ -250,22 +256,62 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       LanguageStandard_to_cstr(build_options.standard),
       Optimization_to_cstr(build_options.optimization));
    String_append_cstr(&build_cmd, " -I./build/lib -L./build/lib");
-   String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
 
-   if (build_options.link_mcu) {
-      String_append_cstr(&build_cmd, build_options.debug_mode
-         ? " -lmcu-debug"
-         : " -lmcu-release");
-   }
+   switch (mod->type) {
+      case MT_Executable: {
+         String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
 
-   foreach (mod->String_external_dep, i) {
-      String* extrn_dep = Vector_get(&mod->String_external_dep, i);
-      String_appendf(&build_cmd, " -l%s", extrn_dep->chars);
+         foreach (mod->ModuleId_dep, i) {
+            Module* dep = Vector_get(&vmake.Modules, *(ModuleId*) Vector_get(&mod->ModuleId_dep, i));
+            String_appendf(&build_cmd, " -l%s", dep->output_name.chars);
+         }
+
+         foreach (mod->String_external_dep, i) {
+            String* extrn_dep = Vector_get(&mod->String_external_dep, i);
+            String_appendf(&build_cmd, " -l%s", extrn_dep->chars);
+         }
+
+         if (build_options.link_mcu) {
+            String_append_cstr(&build_cmd, build_options.debug_mode
+               ? " -lmcu-debug"
+               : " -lmcu-release");
+         }
+
+         i32 result = execute_command_impl(true, false, build_cmd.chars);
+         String_free(&build_cmd);
+         if (result != 0) goto failure;
+      } break;
+
+      case MT_StaticLibrary: {
+         String_appendf(&build_cmd, " -c %s/*.c", mod->path.chars);
+
+         i32 result = execute_command_impl(true, false, build_cmd.chars);
+         if (result != 0) {
+            String_free(&build_cmd);
+            goto failure;
+         }
+
+         String_clear(&build_cmd);
+         String_appendf(&build_cmd, "ar rcs ./build/lib/lib%s.a *.o", mod->output_name.chars);
+
+         result = execute_command_impl(true, false, build_cmd.chars);
+         if (result != 0) {
+            String_free(&build_cmd);
+            goto failure;
+         }
+
+         String_clear(&build_cmd);
+         String_append_cstr(&build_cmd, "rm *.o");
+
+         result = execute_command_impl(true, false, build_cmd.chars);
+         String_free(&build_cmd);
+         if (result != 0) goto failure;
+      } break;
+
+      default: {
+         panic("unreachable");
+      }
    }
-   
-   i32 result = execute_command_impl(true, false, build_cmd.chars);
-   String_free(&build_cmd);
-   if (result != 0) goto failure;
    
    println("[i] Build successfull");
    return false;
