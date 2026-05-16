@@ -29,6 +29,7 @@ typedef struct {
       bool wall;
       bool wextra;
       bool pedantic;
+      bool no_override_init;
    } warnings;
    bool link_mcu;
    bool debug_mode;
@@ -39,7 +40,8 @@ typedef usize ModuleId;
 
 typedef enum {
    MT_Executable,
-   MT_StaticLibrary
+   MT_StaticLibrary,
+   MT_Test
 } ModuleType;
 
 typedef struct {
@@ -251,6 +253,7 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
    if (build_options.warnings.wall)     String_append_cstr(&build_cmd, " -Wall");
    if (build_options.warnings.wextra)   String_append_cstr(&build_cmd, " -Wextra");
    if (build_options.warnings.pedantic) String_append_cstr(&build_cmd, " -pedantic");
+   if (build_options.warnings.no_override_init) String_append_cstr(&build_cmd, " -Wno-override-init");
    if (!build_options.debug_mode)       String_append_cstr(&build_cmd, " -DNDEBUG");
    String_appendf(&build_cmd, " -std=%s -%s",
       LanguageStandard_to_cstr(build_options.standard),
@@ -258,6 +261,9 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
    String_append_cstr(&build_cmd, " -I./build/lib -L./build/lib");
 
    switch (mod->type) {
+      case MT_Test: {
+         String_appendf(&build_cmd, " -x c %s/*.ct", mod->path.chars);
+      } [[fallthrough]];
       case MT_Executable: {
          String_appendf(&build_cmd, " %s/*.c -o build/bin/%s", mod->path.chars, mod->output_name.chars);
 
