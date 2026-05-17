@@ -84,6 +84,8 @@ i32 execute_command_impl(bool echo, bool suppress, const cstr format, ...);
 #ifdef VMAKE_IMPL
 #undef VMAKE_IMPL
 
+#include <mcu/handlers.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
