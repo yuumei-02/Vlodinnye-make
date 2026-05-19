@@ -1,3 +1,5 @@
+// @todo: make a man page for vmake
+
 #ifndef VMAKE_H
 #define VMAKE_H
 
@@ -56,8 +58,6 @@ typedef struct {
    Vector Modules;
 } Vmake;
 
-extern Vmake vmake;
-
 const cstr Compiler_to_cstr(Compiler self);
 const cstr Optimization_to_cstr(Optimization self);
 const cstr LanguageStandard_to_cstr(LanguageStandard self);
@@ -69,7 +69,7 @@ ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type);
 void Module_add_dependency(ModuleId self, ModuleId dependency);
 void Module_add_external_dependency(ModuleId self, const cstr dependency_name);
 
-Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
+void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
 bool Vmake_build(ModuleId module, BuildOptions build_options);
 
 /// returns [-1] on [failure].
@@ -83,6 +83,8 @@ i32 execute_command_impl(bool echo, bool suppress, const cstr format, ...);
 
 #ifdef VMAKE_IMPL
 #undef VMAKE_IMPL
+
+static Vmake vmake;
 
 #include <mcu/handlers.h>
 
@@ -193,13 +195,13 @@ void Module_add_external_dependency(ModuleId self, const cstr dependency_name) {
 #define REBUILD_CMD "gcc -Wall -Wextra -pedantic -std=c23 vmake.c -o vmake -lmcu-debug"
 #endif
 
-Vmake Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
-   Vmake self = {
+void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]) {
+   vmake = (Vmake) {
       .Modules = Vector_new(sizeof(Module))
    };
    
    for (i32 i = 1; i < argc; ++i) {
-      if (strcmp(argv[i], "--no-rebuild") == 0) return self;
+      if (strcmp(argv[i], "--no-rebuild") == 0) return;
    }
 
    if (execute_command_impl(true, true, "mkdir -p build/bin")) goto failure;
