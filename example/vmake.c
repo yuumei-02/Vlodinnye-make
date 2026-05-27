@@ -3,8 +3,6 @@
 
 #include <mcu/handlers.h>
 
-Vmake vmake;
-
 bool build() {
    BuildOptions build_options = {
       .compiler     = GCC,
@@ -16,7 +14,8 @@ bool build() {
          .pedantic = true
       },
       .link_mcu = true,
-      .debug_mode = true
+      .debug_mode = true,
+      .use_gdb = true
    };
 
    ModuleId mod_1 = Module_new("module-1", "./module_1", MT_Executable);
@@ -24,7 +23,7 @@ bool build() {
 }
 
 i32 main(i32 argc, cstr argv[]) {
-   vmake = Vmake_go_rebuild_yourself(argc, argv);
+   Vmake_go_rebuild_yourself(argc, argv);
    
    i32 result = 0;
    for (i32 i = 1; i < argc - 1; ++i) {

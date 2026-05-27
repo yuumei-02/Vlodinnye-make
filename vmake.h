@@ -35,6 +35,7 @@ typedef struct {
    } warnings;
    bool link_mcu;
    bool debug_mode;
+   bool use_gdb;
 } BuildOptions;
 
 /// Module ID
@@ -136,7 +137,8 @@ BuildOptions BuildOptions_default_debug() {
          .pedantic = true
       },
       .link_mcu = true,
-      .debug_mode = true
+      .debug_mode = true,
+      .use_gdb = false,
    };
 }
 
@@ -151,7 +153,8 @@ BuildOptions BuildOptions_default_release() {
          .pedantic = false
       },
       .link_mcu = true,
-      .debug_mode = false
+      .debug_mode = false,
+      .use_gdb = false
    };
 }
 
@@ -258,7 +261,13 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
    if (build_options.warnings.wextra)   String_append_cstr(&build_cmd, " -Wextra");
    if (build_options.warnings.pedantic) String_append_cstr(&build_cmd, " -pedantic");
    if (build_options.warnings.no_override_init) String_append_cstr(&build_cmd, " -Wno-override-init");
-   if (!build_options.debug_mode)       String_append_cstr(&build_cmd, " -DNDEBUG");
+   
+   if (!build_options.debug_mode) {
+      String_append_cstr(&build_cmd, " -DNDEBUG");
+   } else {
+      String_append_cstr(&build_cmd, build_options.use_gdb ? " -ggdb" : " -g");
+   }
+   
    String_appendf(&build_cmd, " -std=%s -%s",
       LanguageStandard_to_cstr(build_options.standard),
       Optimization_to_cstr(build_options.optimization));
