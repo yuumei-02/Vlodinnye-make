@@ -53,6 +53,7 @@ typedef struct {
    String path;
    Vector ModuleId_dep;
    Vector String_external_dep;
+   bool dont_rebuild;
 } Module;
 
 typedef struct {
@@ -66,9 +67,21 @@ const cstr LanguageStandard_to_cstr(LanguageStandard self);
 BuildOptions BuildOptions_default_debug();
 BuildOptions BuildOptions_default_release();
 
-ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type);
+typedef struct {
+   bool dont_rebuild;
+} ModuleNewOpt;
+
+#define Module_new(output_name, path, type, ...) \
+   Module_new_impl(output_name, path, type, (ModuleNewOpt) { \
+      .dont_rebuild = false \
+      __VA_OPT__(,) __VA_ARGS__ \
+   })
+ModuleId Module_new_impl(const cstr output_name, const cstr path, ModuleType type, ModuleNewOpt opt);
+
 void Module_add_dependency(ModuleId self, ModuleId dependency);
 void Module_add_external_dependency(ModuleId self, const cstr dependency_name);
+
+Module* Module_from_ModuleId(ModuleId self);
 
 void Vmake_go_rebuild_yourself(i32 argc, cstr argv[]);
 bool Vmake_build(ModuleId module, BuildOptions build_options);
@@ -158,7 +171,7 @@ BuildOptions BuildOptions_default_release() {
    };
 }
 
-ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type) {
+ModuleId Module_new_impl(const cstr output_name, const cstr path, ModuleType type, ModuleNewOpt opt) {
    mcu_assert(output_name != nullptr, "output_name can't be null");
    mcu_assert(path != nullptr, "path can't be null");
    
@@ -167,7 +180,8 @@ ModuleId Module_new(const cstr output_name, const cstr path, ModuleType type) {
       .output_name = String_from((cstr) output_name),
       .path = String_from((cstr) path),
       .ModuleId_dep = Vector_new(sizeof(ModuleId)),
-      .String_external_dep = Vector_new(sizeof(String))
+      .String_external_dep = Vector_new(sizeof(String)),
+      .dont_rebuild = opt.dont_rebuild
    };
 
    Vector_push(&vmake.Modules, &self);
@@ -192,6 +206,10 @@ void Module_add_external_dependency(ModuleId self, const cstr dependency_name) {
 
    String dep = String_from(dependency_name);
    Vector_push(&mod->String_external_dep, &dep);
+}
+
+Module* Module_from_ModuleId(ModuleId self) {
+   return Vector_get(&vmake.Modules, self);
 }
 
 #ifndef REBUILD_CMD
@@ -249,6 +267,9 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
       return true;
    }
 
+   if (mod->dont_rebuild)
+      return false;
+
    foreach (mod->ModuleId_dep, i) {
       ModuleId* mod_id = Vector_get(&mod->ModuleId_dep, i);
       if (Vmake_build(*mod_id, build_options)) goto failure;
@@ -275,6 +296,7 @@ bool Vmake_build(ModuleId module, BuildOptions build_options) {
 
    switch (mod->type) {
       case MT_Test: {
+         String_appendf(&build_cmd, " -DTEST");
          String_appendf(&build_cmd, " -x c %s/*.ct", mod->path.chars);
       } [[fallthrough]];
       case MT_Executable: {
